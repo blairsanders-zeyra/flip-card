@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en-NZ">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<meta name="referrer" content="no-referrer">
+<!-- This page holds no deals and talks to nothing. The card is in the link, after
+     the #, which a browser never sends to a server. See service/flipscout/card.py -->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<title>Deal card</title>
+<style>
+:root {
+  --bg: #f5f4f0; --card: #ffffff; --ink: #1c1c1a; --muted: #6a6963; --line: #e3e1da;
+  --hot: #c2410c; --hot-bg: #fff1e8; --look: #1d4ed8; --look-bg: #eaf0ff;
+  --warn: #a16207; --warn-bg: #fdf6e3; --btn: #1c1c1a; --btn-ink: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #131312; --card: #1d1d1b; --ink: #f0eee7; --muted: #a29f97; --line: #33322e;
+    --hot: #fb923c; --hot-bg: #3a2113; --look: #7aa2ff; --look-bg: #18223d;
+    --warn: #fbbf24; --warn-bg: #33290f; --btn: #f0eee7; --btn-ink: #131312;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 640px; margin: 0 auto; padding: 16px 16px 48px; }
+h1 { font-size: 1.35rem; line-height: 1.25; margin: 8px 0 4px; overflow-wrap: anywhere; }
+p { margin: 12px 0; }
+.muted, small { color: var(--muted); }
+.badge { display: inline-block; font-size: .78rem; font-weight: 600; letter-spacing: .02em;
+  padding: 2px 8px; border-radius: 999px; }
+.badge.hot { color: var(--hot); background: var(--hot-bg); }
+.badge.look { color: var(--look); background: var(--look-bg); }
+.figures { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 14px 0; }
+.figures div { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px; min-width: 0; }
+.figures span { display: block; font-size: .8rem; color: var(--muted); }
+.figures strong { display: block; font-size: 1.2rem; }
+.figures small { display: block; font-size: .75rem; overflow-wrap: anywhere; }
+.flags { list-style: none; padding: 0; margin: 12px 0; }
+.flags li { padding: 8px 12px; border-radius: 8px; margin-bottom: 6px; background: var(--warn-bg); color: var(--warn); }
+label { display: block; font-size: .85rem; color: var(--muted); margin: 14px 0 6px; }
+textarea { width: 100%; font: inherit; color: var(--ink); background: var(--card);
+  border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; resize: vertical; }
+.btn { display: block; width: 100%; text-align: center; font: inherit; font-weight: 600; padding: 13px 16px;
+  border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--ink);
+  text-decoration: none; margin-top: 10px; }
+.btn.primary { background: var(--btn); color: var(--btn-ink); border-color: var(--btn); }
+.note { font-size: .85rem; text-align: center; margin: 8px 0 0; }
+</style>
+</head>
+<body>
+<main>
+  <section id="card" hidden>
+    <p style="margin:6px 0 0"><span class="badge" id="tier"></span></p>
+    <h1 id="title"></h1>
+    <p class="muted" id="where" style="margin:0"></p>
+    <div class="figures" id="figures" hidden>
+      <div><span>Resale</span><strong id="resale"></strong></div>
+      <div><span>Profit</span><strong id="profit"></strong><small id="return"></small></div>
+      <div><span id="pay-label"></span><strong id="pay"></strong><small id="pay-note"></small></div>
+    </div>
+    <p id="reason"></p>
+    <ul class="flags" id="flags" hidden></ul>
+    <div id="draft-box" hidden>
+      <label for="draft">Message to the seller</label>
+      <textarea id="draft" rows="4"></textarea>
+    </div>
+    <a class="btn primary" id="go"></a>
+    <a class="btn" id="trademe">Check Trade Me</a>
+    <div id="full-box" hidden>
+      <a class="btn" id="full">Full card: photo, Bought, Pass</a>
+      <p class="note muted">The full card needs Tailscale on.</p>
+    </div>
+  </section>
+  <section id="empty" hidden>
+    <h1>No deal in this link</h1>
+    <p class="muted">Open the alert in Pushover and tap its deal card link.</p>
+  </section>
+</main>
+<script>
+// Everything here comes from the link, and listing titles are written by strangers,
+// so it all goes in as text, never as HTML.
+const WARNINGS = {
+  price_below_half: "Under half the resale value: possible scam or stolen",
+  new_seller: "Seller joined this year and has no ratings",
+  vague_origin: "Vague about where it came from, or the serial number is hidden",
+  low_confidence: "The AI wasn't sure what model this is",
+  stale_price: "The resale price is more than 45 days old",
+  no_photos: "No photos came through, so nobody has checked them",
+  worn: "Heavy wear, so it resells slower and is never Hot",
+  modded: "Modded or refurbished: valued as stock, check the work at pickup",
+  market_lower: "Christchurch asking prices are well under the price book: worth a re-check",
+  variant_unsure: "The listing doesn't say which variant, so it's valued as the cheapest",
+};
+const $ = id => document.getElementById(id);
+
+function nzd(cents) {
+  const sign = cents < 0 ? "-" : "";
+  const c = Math.abs(cents);
+  if (c % 100) return sign + "$" + (c / 100).toLocaleString("en-NZ", {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  return sign + "$" + (c / 100).toLocaleString("en-NZ");
+}
+
+// The card from the link. Keys are one letter to fit Pushover's 512-character limit:
+// see card_url() in service/flipscout/card.py.
+async function readLink() {
+  try {
+    const text = location.hash.slice(1).replace(/-/g, "+").replace(/_/g, "/");
+    const bytes = Uint8Array.from(atob(text), c => c.charCodeAt(0));
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+    const deal = JSON.parse(await new Response(stream).text());
+    return /^\d+$/.test(deal.f) ? deal : null;
+  } catch (e) { return null; }
+}
+
+async function show() {
+  const d = await readLink();
+  $("card").hidden = !d;
+  $("empty").hidden = !!d;
+  if (!d) return;
+
+  document.title = d.n;
+  $("tier").textContent = d.t === "hot" ? "Hot" : "Worth a look";
+  $("tier").className = "badge " + (d.t === "hot" ? "hot" : "look");
+  $("title").textContent = d.h || d.n;
+  $("where").textContent = nzd(d.a) + (d.s ? ", " + d.s : "");
+
+  $("figures").hidden = d.v == null;
+  if (d.v != null) {
+    $("resale").textContent = nzd(d.v);
+    $("profit").textContent = nzd(d.p);
+    $("return").textContent = d.r + "% return" + (d.o ? " at " + nzd(d.o) : "");
+    $("pay-label").textContent = d.o ? "Offer" : "Pay";
+    $("pay").textContent = nzd(d.y || d.a);
+    $("pay-note").textContent = d.o ? "asking " + nzd(d.a) : "full price";
+  }
+  $("reason").textContent = d.g ? d.g + "." : "";
+
+  const flags = (d.w || []).map(w => WARNINGS[w] || w);
+  $("flags").hidden = !flags.length;
+  $("flags").replaceChildren(...flags.map(f => {
+    const li = document.createElement("li");
+    li.textContent = f;
+    return li;
+  }));
+
+  $("draft-box").hidden = !d.d;
+  $("draft").value = d.d || "";
+  $("go").textContent = d.d ? "Copy message and open listing" : "Open listing";
+  $("go").href = "https://www.facebook.com/marketplace/item/" + d.f + "/";
+  $("trademe").href = "https://www.trademe.co.nz/a/marketplace/search?search_string=" + encodeURIComponent(d.n);
+
+  const full = /^https?:\/\/[a-z0-9.-]+(:\d+)?$/.test(d.c || "");
+  $("full-box").hidden = !full;
+  if (full) $("full").href = d.c + "/deal/" + Number(d.i);
+}
+
+// Copy has to happen inside the tap itself, before the link opens. Same two routes
+// as the full card, because this can also be opened in places without the clipboard API.
+function copyText(text) {
+  if (window.isSecureContext && navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {});
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  Object.assign(ta.style, {position: "fixed", top: "0", left: "0", opacity: "0", fontSize: "16px"});
+  document.body.appendChild(ta);
+  const range = document.createRange();
+  range.selectNodeContents(ta);
+  const sel = window.getSelection();
+  sel.removeAllRanges(); sel.addRange(range);
+  ta.setSelectionRange(0, text.length);
+  try { document.execCommand("copy"); } catch (e) {}
+  document.body.removeChild(ta);
+}
+$("go").addEventListener("click", () => { if ($("draft").value) copyText($("draft").value); });
+
+// Safari reuses a tab when only the part after the # changes, so a second alert
+// tapped in the same tab must redraw or it would show the last deal.
+window.addEventListener("hashchange", show);
+show();
+</script>
+</body>
+</html>
