@@ -126,7 +126,9 @@ async function show() {
   $("tier").textContent = d.t === "hot" ? "Hot" : "Worth a look";
   $("tier").className = "badge " + (d.t === "hot" ? "hot" : "look");
   $("title").textContent = d.h || d.n;
-  $("where").textContent = nzd(d.a) + (d.s ? ", " + d.s : "");
+  // The seller's title is often vaguer than what the scout worked out it is.
+  const model = d.h && d.h.toLowerCase() !== d.n.toLowerCase() ? d.n + ", " : "";
+  $("where").textContent = model + nzd(d.a) + (d.s ? ", " + d.s : "");
 
   $("figures").hidden = d.v == null;
   if (d.v != null) {
